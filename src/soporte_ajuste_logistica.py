@@ -13,6 +13,7 @@ from sklearn import tree
 # -----------------------------------------------------------------------
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import roc_curve
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.model_selection import train_test_split, learning_curve, GridSearchCV, cross_val_score, StratifiedKFold, KFold
 from sklearn.metrics import (
@@ -43,6 +44,10 @@ class AnalisisModelosClasificacion:
             self.X, self.y, train_size=0.8, random_state=42, shuffle=True
         )
 
+        # Inicialización de probabilidades para ROC
+        self.prob_train = None
+        self.prob_test = None
+
         # Diccionario de modelos y resultados
         self.modelos = {
             "logistic_regression": LogisticRegression(),
@@ -53,7 +58,7 @@ class AnalisisModelosClasificacion:
         }
         self.resultados = {nombre: {"mejor_modelo": None, "pred_train": None, "pred_test": None} for nombre in self.modelos}
 
-    def ajustar_modelo(self, modelo_nombre, param_grid=None, cross_validation = 5):
+    def ajustar_modelo(self, modelo_nombre, param_grid=None, cross_validation = 5, ruta_guardar_modelo = "",nombre_modelo_guardar="mejor_modelo.pkl"):
         """
         Ajusta el modelo seleccionado con GridSearchCV.
         """
@@ -110,12 +115,11 @@ class AnalisisModelosClasificacion:
                                    scoring='accuracy')
         
         grid_search.fit(self.X_train, self.y_train)
-        self.resultados[modelo_nombre]["mejor_modelo"] = grid_search.best_estimator_
         self.resultados[modelo_nombre]["pred_train"] = grid_search.best_estimator_.predict(self.X_train)
         self.resultados[modelo_nombre]["pred_test"] = grid_search.best_estimator_.predict(self.X_test)
-
+        self.resultados[modelo_nombre]["mejor_modelo"] = grid_search.best_estimator_
         # Guardar el modelo
-        with open('mejor_modelo.pkl', 'wb') as f:
+        with open(f'{ruta_guardar_modelo}/{nombre_modelo_guardar}', 'wb') as f:
             pickle.dump(grid_search.best_estimator_, f)
 
     def calcular_metricas(self, modelo_nombre):
@@ -133,11 +137,11 @@ class AnalisisModelosClasificacion:
         
         # Calcular probabilidades para AUC (si el modelo las soporta)
         modelo = self.resultados[modelo_nombre]["mejor_modelo"]
-        if hasattr(modelo, "logistic_regression"):
-            prob_train = modelo.predict_proba(self.X_train)[:, 1]
-            prob_test = modelo.predict_proba(self.X_test)[:, 1]
+        if hasattr(modelo, "predict_proba"):
+            self.prob_train = modelo.predict_proba(self.X_train)[:, 1]
+            self.prob_test = modelo.predict_proba(self.X_test)[:, 1]
         else:
-            prob_train = prob_test = None  # Si no hay probabilidades, AUC no será calculado
+            self.prob_train = self.prob_test = None  # Si no hay probabilidades, AUC no será calculado
 
         # Métricas para conjunto de entrenamiento
         metricas_train = {
@@ -146,7 +150,7 @@ class AnalisisModelosClasificacion:
             "recall": recall_score(self.y_train, pred_train, average='weighted', zero_division=0),
             "f1": f1_score(self.y_train, pred_train, average='weighted', zero_division=0),
             "kappa": cohen_kappa_score(self.y_train, pred_train),
-            "auc": roc_auc_score(self.y_train, prob_train) if prob_train is not None else None
+            "auc": roc_auc_score(self.y_train, self.prob_train) if self.prob_train is not None else None
         }
 
         # Métricas para conjunto de prueba
@@ -156,15 +160,35 @@ class AnalisisModelosClasificacion:
             "recall": recall_score(self.y_test, pred_test, average='weighted', zero_division=0),
             "f1": f1_score(self.y_test, pred_test, average='weighted', zero_division=0),
             "kappa": cohen_kappa_score(self.y_test, pred_test),
-            "auc": roc_auc_score(self.y_test, prob_test) if prob_test is not None else None
+            "auc": roc_auc_score(self.y_test, self.prob_test) if self.prob_test is not None else None
         }
 
         # Combinar métricas en un DataFrame
         return pd.DataFrame({"train": metricas_train, "test": metricas_test})
 
-    def plot_matriz_confusion(self, modelo_nombre):
+    def plot_matriz_confusion(self, modelo_nombre, invertir=True, tamano_grafica=(4, 3), labels=False, label0="", label1=""):
         """
-        Plotea la matriz de confusión para el modelo seleccionado.
+        Genera un heatmap para visualizar una matriz de confusión.
+
+        Args:
+            matriz_confusion (numpy.ndarray): Matriz de confusión que se desea graficar.
+            invertir (bool, opcional): Si es True, invierte el orden de las filas y columnas de la matriz
+                para reflejar el eje Y invertido (orden [1, 0] en lugar de [0, 1]). Por defecto, True.
+            tamano_grafica (tuple, opcional): Tamaño de la figura en pulgadas. Por defecto, (4, 3).
+            labels (bool, opcional): Si es True, permite agregar etiquetas personalizadas a las clases
+                utilizando `label0` y `label1`. Por defecto, False.
+            label0 (str, opcional): Etiqueta personalizada para la clase 0 (negativa). Por defecto, "".
+            label1 (str, opcional): Etiqueta personalizada para la clase 1 (positiva). Por defecto, "".
+
+        Returns:
+            None: La función no retorna ningún valor, pero muestra un heatmap con la matriz de confusión.
+
+            Ejemplos:
+        > from sklearn.metrics import confusion_matrix
+        >         >>> y_true = [0, 1, 1, 0, 1, 1]
+        >         >>> y_pred = [0, 1, 1, 0, 0, 1]
+        >         >>> matriz_confusion = confusion_matrix(y_true, y_pred)
+        >         >>> plot_matriz_confusion(matriz_confusion, invertir=True, labels=True,label0="Clase Negativa", label1="Clase Positiva")
         """
         if modelo_nombre not in self.resultados:
             raise ValueError(f"Modelo '{modelo_nombre}' no reconocido.")
@@ -174,13 +198,39 @@ class AnalisisModelosClasificacion:
         if pred_test is None:
             raise ValueError(f"Debe ajustar el modelo '{modelo_nombre}' antes de calcular la matriz de confusión.")
 
-        # Matriz de confusión
-        matriz_conf = confusion_matrix(self.y_test, pred_test)
-        plt.figure(figsize=(8, 6))
-        sns.heatmap(matriz_conf, annot=True, fmt='g', cmap='Blues')
-        plt.title(f"Matriz de Confusión ({modelo_nombre})")
-        plt.xlabel("Predicción")
-        plt.ylabel("Valor Real")
+        matriz_confusion = confusion_matrix(self.y_test, pred_test)
+        if invertir == True:
+            plt.figure(figsize=(tamano_grafica))
+            if labels == True:
+                labels = [f'1: {label1}', f'0: {label0}']
+            else:
+                labels = [f'1', f'0']
+            sns.heatmap(matriz_confusion[::-1, ::-1], annot=True, fmt="g",cmap="Blues", xticklabels=labels, yticklabels=labels)
+            plt.title("Matriz de Confusión")
+        else: 
+            plt.figure(figsize=(tamano_grafica))
+            if labels == True:
+                labels = [f'0: {label0}', f'1: {label1}']
+            else:
+                labels = [f'0', f'1']
+            sns.heatmap(matriz_confusion, annot=True, fmt="g",cmap="Blues", xticklabels=labels, yticklabels=labels)
+            plt.title("Matriz de Confusión")
+
+    def plot_curva_ROC(self, grafica_size = (9,7)):
+        """
+        Plotea la curva ROC utilizando las probabilidades calculadas.
+        """
+        if self.prob_test is None:
+            raise ValueError("Debe calcular las probabilidades (calcular_metricas) antes de graficar la curva ROC.")
+        
+        fpr, tpr, _ = roc_curve(self.y_test, self.prob_test)
+        plt.figure(figsize=grafica_size)
+        sns.lineplot(x=fpr, y=tpr, color="orange", label="Modelo")
+        sns.lineplot(x=[0, 1], y=[0, 1], color="grey", linestyle="--", label="Azar")
+        plt.xlabel("1 - Especificidad (Ratio Falsos Positivos)")
+        plt.ylabel("Recall (Ratio Verdaderos Positivos)")
+        plt.title("Curva ROC")
+        plt.legend()
         plt.show()
     
     def importancia_predictores(self, modelo_nombre):

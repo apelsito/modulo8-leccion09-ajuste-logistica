@@ -16,7 +16,15 @@ from sklearn.tree import DecisionTreeRegressor, plot_tree
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split,GridSearchCV
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
-
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    cohen_kappa_score,
+    confusion_matrix
+)
 
 from sklearn.model_selection import KFold,LeaveOneOut, cross_val_score
 
@@ -163,6 +171,29 @@ def obtener_metricas(y_train,y_pred_train,y_test,y_pred_test):
         }
     }
     df_metricas = pd.DataFrame(metricas).T
+    return df_metricas
+
+def obtener_metricas_logistica(y_train, y_pred_train, y_test, y_pred_test, prob_train, prob_test):
+   
+    metricas = {
+        'train': {
+            'accuracy': accuracy_score(y_train, y_pred_train),
+            'precision': precision_score(y_train, y_pred_train, average='weighted'),
+            'recall': recall_score(y_train, y_pred_train, average='weighted'),
+            'f1': f1_score(y_train, y_pred_train, average='weighted'),
+            'kappa': cohen_kappa_score(y_train,y_pred_train),
+            'auc': roc_auc_score(y_train,prob_train)
+        },
+        'test': {
+            'accuracy': accuracy_score(y_test, y_pred_test),
+            'precision': precision_score(y_test, y_pred_test, average='weighted'),
+            'recall': recall_score(y_test, y_pred_test, average='weighted'),
+            'f1': f1_score(y_test, y_pred_test, average='weighted'),
+            'kappa': cohen_kappa_score(y_test,y_pred_test),
+            'auc': roc_auc_score(y_test,prob_test)
+        }
+    }
+    df_metricas = pd.DataFrame(metricas)
     return df_metricas
 
 def comparar_arboles(df_previos, df_final,lista_previos=False,nombre_modelo = "modelo_previo"):
